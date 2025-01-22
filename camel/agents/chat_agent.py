@@ -13,11 +13,11 @@
 # =========== Copyright 2023 @ CAMEL-AI.org. All Rights Reserved. ===========
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
-
+from loguru import logger
 from tenacity import retry
 from tenacity.stop import stop_after_attempt
 from tenacity.wait import wait_exponential
-
+from google.genai import types
 from camel.agents import BaseAgent
 from camel.configs import ChatGPTConfig
 from camel.messages import ChatMessage, MessageType, SystemMessage
@@ -201,7 +201,7 @@ class ChatAgent(BaseAgent):
 
         return target_memory
 
-    @retry(wait=wait_exponential(min=5, max=60), stop=stop_after_attempt(5))
+    @retry(wait=wait_exponential(min=5, max=60), stop=stop_after_attempt(2))
     @openai_api_key_required
     def step(
             self,
@@ -234,23 +234,38 @@ class ChatAgent(BaseAgent):
 
         output_messages: Optional[List[ChatMessage]]
         info: Dict[str, Any]
-
         if num_tokens < self.model_token_limit:
             response = self.model_backend.run(messages=openai_messages)
             if openai_new_api:
-                if not isinstance(response, ChatCompletion):
+                logger.info("response",response)
+                if not isinstance(response, ChatCompletion) and not isinstance(response, types.GenerateContentResponse):
                     raise RuntimeError("OpenAI returned unexpected struct")
-                output_messages = [
-                    ChatMessage(role_name=self.role_name, role_type=self.role_type,
-                                meta_dict=dict(), **dict(choice.message))
-                    for choice in response.choices
-                ]
-                info = self.get_info(
-                    response.id,
-                    response.usage,
-                    [str(choice.finish_reason) for choice in response.choices],
-                    num_tokens,
-                )
+                if isinstance(response,ChatCompletion):
+                    output_messages = [
+                        ChatMessage(role_name=self.role_name, role_type=self.role_type,
+                                    meta_dict=dict(), **dict(choice.message))
+                        for choice in response.choices
+                    ]
+                    info = self.get_info(
+                        response.id,
+                        response.usage,
+                        [str(choice.finish_reason) for choice in response.choices],
+                        num_tokens,
+                    )
+                elif isinstance(response, types.GenerateContentResponse):
+                    output_messages = [
+                        ChatMessage(role_name=self.role_name, role_type=self.role_type,
+                                    meta_dict=dict(),role="user", content=choice.content.parts[0].text)
+                        for choice in response.candidates
+                    ]
+                    info = self.get_info(
+                        "",
+                        response.usage_metadata,
+                        [str(choice.finish_reason) for choice in response.candidates],
+                        num_tokens,
+                    )
+                else:
+                    raise RuntimeError("OpenAI returned unexpected struct")
             else:
                 if not isinstance(response, dict):
                     raise RuntimeError("OpenAI returned unexpected struct")
@@ -280,7 +295,6 @@ class ChatAgent(BaseAgent):
                 ["max_tokens_exceeded_by_camel"],
                 num_tokens,
             )
-
         return ChatAgentResponse(output_messages, self.terminated, info)
 
     def __repr__(self) -> str:

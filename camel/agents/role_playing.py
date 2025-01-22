@@ -19,6 +19,7 @@ from camel.agents import (
     TaskPlannerAgent,
     TaskSpecifyAgent,
 )
+from loguru import logger
 from camel.agents.chat_agent import ChatAgentResponse
 from camel.messages import ChatMessage, UserChatMessage
 from camel.messages import SystemMessage
@@ -244,6 +245,7 @@ class RolePlaying:
 
         # print("assistant...")
         user_msg_rst = user_msg.set_user_role_at_backend()
+        logger.info("user_msg_rst: " + str(user_msg_rst))
         assistant_response = self.assistant_agent.step(user_msg_rst)
         if assistant_response.terminated or assistant_response.msgs is None:
             return (

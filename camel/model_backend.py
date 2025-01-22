@@ -13,14 +13,15 @@
 # =========== Copyright 2023 @ CAMEL-AI.org. All Rights Reserved. ===========
 from abc import ABC, abstractmethod
 from typing import Any, Dict
-
+from google import genai
+from google.genai import types
 import openai
 import tiktoken
-
+import requests
 from camel.typing import ModelType
 from chatdev.statistics import prompt_cost
 from chatdev.utils import log_visualize
-
+import time
 try:
     from openai.types.chat import ChatCompletion
 
@@ -31,11 +32,11 @@ except ImportError:
 import os
 
 OPENAI_API_KEY = os.environ['OPENAI_API_KEY']
+GEMINI_API_KEY=os.environ['GEMINI_API_KEY']
 if 'BASE_URL' in os.environ:
     BASE_URL = os.environ['BASE_URL']
 else:
     BASE_URL = None
-
 
 class ModelBackend(ABC):
     r"""Base class for different model backends.
@@ -65,7 +66,7 @@ class OpenAIModel(ModelBackend):
 
     def run(self, *args, **kwargs):
         string = "\n".join([message["content"] for message in kwargs["messages"]])
-        encoding = tiktoken.encoding_for_model(self.model_type.value)
+        encoding = tiktoken.encoding_for_model(self.model_type.value if self.model_type.value != "gemini-2.0-flash-exp" else "gpt-3.5-turbo")
         num_prompt_tokens = len(encoding.encode(string))
         gap_between_send_receive = 15 * len(kwargs["messages"])
         num_prompt_tokens += gap_between_send_receive
@@ -77,10 +78,19 @@ class OpenAIModel(ModelBackend):
                     api_key=OPENAI_API_KEY,
                     base_url=BASE_URL,
                 )
-            else:
-                client = openai.OpenAI(
-                    api_key=OPENAI_API_KEY
+            elif self.model_type == ModelType.GEMINI:
+                client = genai.Client(
+                    api_key=GEMINI_API_KEY
                 )
+            else:
+                if self.model_type == ModelType.GEMINI:
+                    client = genai.Client(
+                    api_key=GEMINI_API_KEY
+                )
+                else:
+                    client = openai.OpenAI(
+                        api_key=OPENAI_API_KEY
+                    )
 
             num_max_token_map = {
                 "gpt-3.5-turbo": 4096,
@@ -93,25 +103,46 @@ class OpenAIModel(ModelBackend):
                 "gpt-4-turbo": 100000,
                 "gpt-4o": 4096, #100000
                 "gpt-4o-mini": 16384, #100000
+                "gemini-2.0-flash-exp": 4096,
             }
             num_max_token = num_max_token_map[self.model_type.value]
             num_max_completion_tokens = num_max_token - num_prompt_tokens
             self.model_config_dict['max_tokens'] = num_max_completion_tokens
+            #gemini用に対応
+            if self.model_type == ModelType.GEMINI:
+                if 'frequency_penalty' in self.model_config_dict:
+                    del self.model_config_dict['frequency_penalty']
 
-            response = client.chat.completions.create(*args, **kwargs, model=self.model_type.value,
+                if 'logit_bias' in self.model_config_dict:
+                    del self.model_config_dict['logit_bias']
+                self.model_config_dict['n'] = 1
+            if self.model_type != ModelType.GEMINI:
+                response = client.chat.completions.create(*args, **kwargs, model=self.model_type.value,
                                                       **self.model_config_dict)
+                cost = prompt_cost(
+                    self.model_type.value,
+                    num_prompt_tokens=response.usage.prompt_tokens,
+                    num_completion_tokens=response.usage.completion_tokens
+                )
 
-            cost = prompt_cost(
-                self.model_type.value,
-                num_prompt_tokens=response.usage.prompt_tokens,
-                num_completion_tokens=response.usage.completion_tokens
-            )
+                log_visualize(
+                    "**[OpenAI_Usage_Info Receive]**\nprompt_tokens: {}\ncompletion_tokens: {}\ntotal_tokens: {}\ncost: ${:.6f}\n".format(
+                        response.usage.prompt_tokens, response.usage.completion_tokens,
+                        response.usage.total_tokens, cost))
+            else:
+                response = client.models.generate_content(model='gemini-2.0-flash-exp', contents=str(kwargs["messages"]))
+                cost = prompt_cost(
+                    self.model_type.value,
+                    num_prompt_tokens=response.usage_metadata.prompt_token_count,
+                    num_completion_tokens=response.usage_metadata.candidates_token_count
+                )
 
-            log_visualize(
-                "**[OpenAI_Usage_Info Receive]**\nprompt_tokens: {}\ncompletion_tokens: {}\ntotal_tokens: {}\ncost: ${:.6f}\n".format(
-                    response.usage.prompt_tokens, response.usage.completion_tokens,
-                    response.usage.total_tokens, cost))
-            if not isinstance(response, ChatCompletion):
+                log_visualize(
+                    "**[Gemini_Usage_Info Receive]**\nprompt_tokens: {}\ncompletion_tokens: {}\ntotal_tokens: {}\ncost: ${:.6f}\n".format(
+                        response.usage_metadata.prompt_token_count, response.usage_metadata.candidates_token_count,
+                        response.usage_metadata.total_token_count, cost))
+                time.sleep(5.5)
+            if not isinstance(response, ChatCompletion) and not isinstance(response, types.GenerateContentResponse):
                 raise RuntimeError("Unexpected return from OpenAI API")
             return response
         else:
@@ -130,9 +161,13 @@ class OpenAIModel(ModelBackend):
             num_max_token = num_max_token_map[self.model_type.value]
             num_max_completion_tokens = num_max_token - num_prompt_tokens
             self.model_config_dict['max_tokens'] = num_max_completion_tokens
-
-            response = openai.ChatCompletion.create(*args, **kwargs, model=self.model_type.value,
-                                                    **self.model_config_dict)
+            if self.model_type != ModelType.GEMINI:
+                response = client.chat.completions.create(*args, **kwargs, model=self.model_type.value,
+                                                      **self.model_config_dict)
+            else:
+                response = client.models.generate_content(model='gemini-2.0-flash-exp', contents=str(kwargs["messages"]),config=types.GenerateContentConfig(
+                    **self.model_config_dict
+                ))
 
             cost = prompt_cost(
                 self.model_type.value,
@@ -167,7 +202,6 @@ class StubModel(ModelBackend):
             ],
         )
 
-
 class ModelFactory:
     r"""Factory of backend models.
 
@@ -188,6 +222,7 @@ class ModelFactory:
             ModelType.GPT_4_TURBO_V,
             ModelType.GPT_4O,
             ModelType.GPT_4O_MINI,
+            ModelType.GEMINI,
             None
         }:
             model_class = OpenAIModel
