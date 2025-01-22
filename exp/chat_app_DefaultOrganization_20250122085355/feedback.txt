@@ -1,0 +1,5 @@
+アプリ作成に使用したAI：gemini-flash-2.0
+streamlitとしてアプリがちゃんとできていた
+しかし、openaiモジュールのバージョンが古いためか、
+Client.init() got an unexpected keyword argument 'proxies'
+(=proxyの設定ができない)というエラーが出てしまった
