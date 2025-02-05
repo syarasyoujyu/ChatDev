@@ -1,7 +1,7 @@
 import os
 import re
 from abc import ABC, abstractmethod
-
+import requests
 from camel.agents import RolePlaying
 from camel.messages import ChatMessage
 from camel.typing import TaskType, ModelType
