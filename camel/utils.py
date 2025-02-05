@@ -132,7 +132,7 @@ def get_model_token_limit(model: ModelType) -> int:
     elif model == ModelType.GPT_4O_MINI:
         return 128000
     elif model == ModelType.GEMINI:
-        return 4096
+        return 40960
     else:
         raise ValueError("Unknown model type")
 

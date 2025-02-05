@@ -1,5 +1,5 @@
 import os
-
+from loguru import logger
 import numpy as np
 
 
@@ -37,7 +37,7 @@ def prompt_cost(model_type: str, num_prompt_tokens: float, num_completion_tokens
 
 
 def get_info(dir, log_filepath):
-    print("dir:", dir)
+    logger.info("dir:", dir)
 
     model_type = ""
     version_updates = -1

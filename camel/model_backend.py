@@ -30,7 +30,7 @@ except ImportError:
     openai_new_api = False  # old openai api version
 
 import os
-
+from loguru import logger
 OPENAI_API_KEY = os.environ['OPENAI_API_KEY']
 GEMINI_API_KEY=os.environ['GEMINI_API_KEY']
 if 'BASE_URL' in os.environ:
@@ -157,6 +157,7 @@ class OpenAIModel(ModelBackend):
                 "gpt-4-turbo": 100000,
                 "gpt-4o": 4096, #100000
                 "gpt-4o-mini": 16384, #100000
+                "gemini-2.0-flash-exp": 40960,
             }
             num_max_token = num_max_token_map[self.model_type.value]
             num_max_completion_tokens = num_max_token - num_prompt_tokens
@@ -168,7 +169,7 @@ class OpenAIModel(ModelBackend):
                 response = client.models.generate_content(model='gemini-2.0-flash-exp', contents=str(kwargs["messages"]),config=types.GenerateContentConfig(
                     **self.model_config_dict
                 ))
-
+            logger.info(response)
             cost = prompt_cost(
                 self.model_type.value,
                 num_prompt_tokens=response["usage"]["prompt_tokens"],
